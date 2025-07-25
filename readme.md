@@ -1,6 +1,6 @@
-# Projeto: Automação Remota para Geoserver e AWS S3
+# Automação Remota para Geoserver e AWS S3
 
-Este projeto permite gerenciar arquivos e camadas geoespaciais em um servidor remoto, integrando operações com o Geoserver e o bucket S3 `quasar-sensoriamento`. As operações são realizadas via SSH e comandos REST, facilitando o fluxo de trabalho para uploads, downloads, listagens e integração com banco de dados.
+Este projeto permite gerenciar arquivos e camadas geoespaciais em um servidor remoto, integrando operações com o Geoserver e o bucket S3 `quasar-sensoriamento`. As operações são realizadas via SSH e comandos REST.
 
 ## Antes de iniciar
 
