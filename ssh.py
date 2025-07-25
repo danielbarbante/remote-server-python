@@ -154,7 +154,7 @@ def upload_raster_to_geoserver(workspace, path_file, store_name):
     """Subindo arquivos raster para o GS remoto
     
     :param workspace: Nome do workspace para subir a camada
-    :param path_file: Caminho de onde está o arquivo raster
+    :param path_file: Caminho de onde está o zip com raster
     :param store_name: Nome do datastore onde a camada será criada
     :return: Mensagem de sucesso ou erro
     """
@@ -179,75 +179,130 @@ def upload_raster_to_geoserver(workspace, path_file, store_name):
 
 def upload_geojson_to_geoserver(workspace, path_file, store_name=None):
     """
-    Cria um datastore e publica um GeoJSON no GeoServer remotamente via REST API.
+    Converte GeoJSON em GPKG via SSH e publica no GeoServer via REST API.
 
     :param workspace: Nome do workspace no GeoServer
-    :param path_file: Caminho no servidor do arquivo .geojson (ex: /opt/geoserver_data/mapa.geojson)
+    :param path_file: Caminho no servidor do arquivo .geojson (ex: geoserver-automation/map.geojson)
     :param store_name: (Opcional) Nome do datastore. Se None, usa o nome do arquivo
     :return: Mensagem de sucesso ou erro
     """
     client = start_session()
 
-    # Extrai o nome do arquivo sem extensão para usar como store_name/layer_name se não fornecido
+    if not path_file.lower().endswith('.geojson'):
+        raise ValueError("O arquivo de entrada deve ser um GeoJSON (*.geojson)")
+
     filename = os.path.basename(path_file)
+    base_name = os.path.splitext(filename)[0]
     if store_name is None:
-        store_name = os.path.splitext(filename)[0]
-    layer_name = store_name
+        store_name = base_name
 
-    # Cria o datastore apontando para o arquivo GeoJSON
-    datastore_payload = {
-        "dataStore": {
-            "name": store_name,
-            "connectionParameters": {
-                "entry": [
-                    {"@key": "filetype", "$": "geojson"},
-                    {"@key": "url", "$": f"file:{path_file}"}
-                ]
-            }
-        }
-    }
 
-    create_store_cmd = (
-        f"curl -s -u admin:geoserver -XPOST "
-        f"-H 'Content-type: application/json' "
-        f"-d '{json.dumps(datastore_payload)}' "
-        f"http://localhost:8080/geoserver/rest/workspaces/{workspace}/datastores"
+    gpkg_relative = os.path.join(os.path.dirname(path_file), f"{base_name}.gpkg").replace("\\", "/")
+
+    stdin, stdout, stderr = client.exec_command(f"realpath {gpkg_relative}")
+    gpkg_path = stdout.read().decode().strip()
+    # gpkg_path = os.path.join(os.path.dirname(path_file), f"{base_name}.gpkg").replace("\\", "/")
+    
+    
+    print(gpkg_path)
+
+    # Converter GeoJSON em GPKG no servidor via SSH
+    print(f"Convertendo {path_file} para {gpkg_path} via SSH...")
+
+    convert_cmd = f'ogr2ogr -f GPKG {gpkg_path} {path_file}'
+    
+    print(convert_cmd)
+    
+    stdin, stdout, stderr = client.exec_command(convert_cmd)
+    err_convert = stderr.read().decode()
+    out_convert = stdout.read().decode()
+    
+    print(out_convert)
+
+    if err_convert:
+        print("Erro na conversão do GeoJSON para GPKG:")
+        print(err_convert)
+        client.close()
+        return
+
+    command = (
+        f'curl -s -u admin:geoserver -XPUT '
+        f'-H "Content-type: application/x-sqlite3" '
+        f'--data-binary "@{gpkg_path}" '
+        f'"http://localhost:8080/geoserver/rest/workspaces/{workspace}/datastores/{store_name}/file.gpkg"'
     )
 
-    stdin, stdout, stderr = client.exec_command(create_store_cmd)
-    out1 = stdout.read().decode()
-    err1 = stderr.read().decode()
-
-    publish_payload = {
-        "featureType": {
-            "name": layer_name,
-            "title": layer_name,
-            "srs": "EPSG:4326"
-        }
-    }
-
-    publish_cmd = (
-        f"curl -s -u admin:geoserver -XPOST "
-        f"-H 'Content-type: application/json' "
-        f"-d '{json.dumps(publish_payload)}' "
-        f"http://localhost:8080/geoserver/rest/workspaces/{workspace}/datastores/{store_name}/featuretypes"
-    )
-
-    stdin, stdout, stderr = client.exec_command(publish_cmd)
-    out2 = stdout.read().decode()
-    err2 = stderr.read().decode()
-
+    stdin, stdout, stderr = client.exec_command(command)
+    output = stdout.read().decode()
+    error = stderr.read().decode()
     client.close()
 
-    if err1 or err2:
-        print("Erro ao criar datastore ou publicar camada:")
-        if err1:
-            print("Datastore:", err1)
-        if err2:
-            print("Camada:", err2)
+    if error:
+        return print("Erro:\n", error)
     else:
-        print("GeoJSON enviado e camada publicada com sucesso!")
-        print(out1 + out2)
+        return print("Upload concluído com sucesso!\n", output)  
+    # Criar datastore apontando para o GPKG
+    # datastore_payload = {
+    #     "dataStore": {
+    #         "name": store_name,
+    #         "connectionParameters": {
+    #             "entry": [
+    #                 {"@key": "filetype", "$": "gpkg"},
+    #                 {"@key": "url", "$": f"file:{gpkg_path}"}
+    #             ]
+    #         }
+    #     }
+    # }
+    
+    # print(datastore_payload["dataStore"]["connectionParameters"]["entry"])
+    # input()
+
+    # create_store_cmd = (
+    #     f"curl -s -o /tmp/create_output.txt -w '%{{http_code}}' -u admin:geoserver -XPOST "
+    #     f"-H 'Content-type: application/json' "
+    #     f"-d '{json.dumps(datastore_payload)}' "
+    #     f"http://localhost:8080/geoserver/rest/workspaces/{workspace}/datastores"
+    # )
+
+    # stdin, stdout, stderr = client.exec_command(create_store_cmd)
+    # out1 = stdout.read().decode()
+    # err1 = stderr.read().decode()
+
+    # # Publicar a camada
+    # publish_payload = {
+    #     "featureType": {
+    #         "name": store_name,
+    #         "title": store_name,
+    #         "srs": "EPSG:4326"
+    #     }
+    # }
+
+    # publish_cmd = (
+    #     f"curl -s -u admin:geoserver -XPOST "
+    #     f"-H 'Content-type: application/json' "
+    #     f"-d '{json.dumps(publish_payload)}' "
+    #     f"http://localhost:8080/geoserver/rest/workspaces/{workspace}/datastores/{store_name}/featuretypes"
+    # )
+
+    # stdin, stdout, stderr = client.exec_command(publish_cmd)
+    # out2 = stdout.read().decode()
+    # err2 = stderr.read().decode()
+
+    # client.close()
+
+    # if err1 or err2:
+    #     print("Erro ao criar datastore ou publicar camada:")
+    #     if err1:
+    #         print("Datastore:", err1)
+    #     if err2:
+    #         print("Camada:", err2)
+    # else:
+    #     print("-----------------------------")
+    #     print(out1 + out2)
+
+
+# upload_geojson_to_geoserver("teste", "geoserver-automation/map.geojson")
+
 
 
 def convert_a_file_to_zip(file_name, remote_folder):
@@ -259,7 +314,7 @@ def convert_a_file_to_zip(file_name, remote_folder):
     client = start_session()
     zip_name = os.path.splitext(file_name)[0]
     print("o file_name é: ", file_name)
-    input()
+    # input()
     command = f"cd {remote_folder} && zip -r {zip_name}.zip {file_name}"
     
     stdin, stdout, stderr = client.exec_command(command)
@@ -270,6 +325,7 @@ def convert_a_file_to_zip(file_name, remote_folder):
     else:
         print(stdout.read().decode())
         client.close()
+        return zip_name + ".zip"
         
 def exclude_a_file(file_name, remote_folder):
     client = start_session()
@@ -370,9 +426,9 @@ def upload_any_file_to_geoserver(workspace, path_file, store_name=None):
     elif ext in [".tif", ".tiff"]:
         file_name = os.path.basename(path_file)
         remote_folder = os.path.dirname(path_file)
-        convert_a_file_to_zip(file_name, remote_folder)
-        upload_raster_to_geoserver(workspace, path_file, store_name)
-        exclude_a_file(file_name, remote_folder)
+        zip_tif_name = convert_a_file_to_zip(file_name, remote_folder)
+        zip_tif_path = os.path.join(remote_folder, zip_tif_name).replace("\\", "/")
+        upload_raster_to_geoserver(workspace, zip_tif_path, store_name)
     elif ext == ".geojson":
         upload_geojson_to_geoserver(workspace, path_file, store_name)
         # exclude_a_file(os.path.splitext(file_name)[0]+".zip", remote_folder)
@@ -381,9 +437,6 @@ def upload_any_file_to_geoserver(workspace, path_file, store_name=None):
     
 
     
-    
-
-
 def list_files_in_s3():
     """Listar arquivos em um bucket S3
     
@@ -403,7 +456,6 @@ def list_files_in_s3():
         client.close()
         
         
-
 def connect_to_db(db_info):
     db_cred = json.load(open(db_info))
     engine = sqlalchemy.create_engine('postgresql://{0}:{1}@{2}:{3}/{4}'.format(db_cred['user'], db_cred['password'], db_cred['host'], db_cred['port'], db_cred['database']))
@@ -420,46 +472,6 @@ def execute_query(qry, db_info):
     except Exception as e:
         raise e
     
-# def geoserver_get_layers_and_query(workspace, db_info, schema):
-#     try:
-#         result = 
-#         if result.get('layers') and result['layers'].get('layer'):
-#             for layer in result['layers']['layer']:
-#                 layer_name = layer.get('name')
-#                 layer_href = layer.get('href')
-#                 geoserver_layer_name = workspace + ":" + layer_name
-                
-#                 qry = """
-#                 INSERT INTO {}.geoserver_layers
-#                 (layer_name, geoserver_workspace, geoserver_layer_name, geoserver_layer_url)
-#                 VALUES(
-#                     '{}', '{}', '{}', '{}'
-#                 )
-#                 """.format(
-#                     schema,
-#                     layer_name,
-#                     workspace,
-#                     geoserver_layer_name,
-#                     layer_href
-#                 )                
-#                 try:
-#                     execute_query(qry, db_info)
-#                     print(f"Layer '{geoserver_layer_name}' inserted successfully.")
-#                     return
-#                 except psycopg2.errors.UniqueViolation:
-#                     print(f"A camada '{geoserver_layer_name}' já existe no banco.")
-#                 except Exception as e:
-#                     print(f"Erro ao inserir layer '{geoserver_layer_name}': {e}")
-            
-            
-#             print(f"Was uploaded {len(result['layers']['layer'])} layers to database.")
-
-#         else:
-#             print("No layers found in workspace: "+workspace)
-#             return
-#     except Exception as e:
-#         print("Erro!!! ", e )
-#         return
 
 def get_layers_from_workspace(workspace):
     """

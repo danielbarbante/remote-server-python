@@ -1,7 +1,7 @@
 from ssh import (list_files_in_s3, download_a_file_from_s3,
-                 view_folder_contents, convert_a_file_to_zip,
-                 exclude_a_file, list_workspaces_in_geoserver,
-                 upload_any_file_to_geoserver, geoserver_get_layers_and_query)
+                 view_folder_contents, list_workspaces_in_geoserver,
+                 upload_any_file_to_geoserver, geoserver_get_layers_and_query,
+                 get_layers_from_workspace)
 
 def mega_operation():
     """Faz um monte de coisa
@@ -17,7 +17,8 @@ def mega_operation():
                         "4. Listar arquivos de uma pasta no servidor\n"
                         "5. Subir arquivo de uma pasta para o Geoserver\n"
                         "6. Listar workspaces\n"
-                        "7. Subir camadas de um workspace para o banco\n"
+                        "7. Listar layers de um workspace\n"
+                        "8. Subir camadas de um workspace para o banco\n"
                         "0. Exit\n"
                             ))
         if option == 1:
@@ -41,8 +42,11 @@ def mega_operation():
             list_workspaces_in_geoserver()
         elif option == 7:
             workspace = str(input("Nome do workspace: "))
+            print(get_layers_from_workspace(workspace))
+        elif option == 8:
+            workspace = str(input("Nome do workspace: "))
             db_info = "./info_db.json"
-            schema = "playground"
+            schema = str(input("Nome do schema: "))
             geoserver_get_layers_and_query(workspace,db_info, schema)
             
                 
